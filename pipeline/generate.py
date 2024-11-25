@@ -17,7 +17,7 @@ import dataeval.coqa as coqa
 import dataeval.nq_open as nq_open
 import dataeval.triviaqa as triviaqa
 import dataeval.SQuAD as SQuAD
-import dataeval.TruthfulQA as TruthfulQA
+# import dataeval.TruthfulQA as TruthfulQA
 import models
 import utils
 from func.metric import *
@@ -36,9 +36,8 @@ parser.add_argument('--seed', type=int, default=2023)
 parser.add_argument('--nprocess', type=int, default=None)
 parser.add_argument('--project_ind', type=int, default=0)
 
-
 args = parser.parse_args()
-logInfo = open("./data/output/logInfo_{}_{}.txt".format(args.model, args.dataset), mode="w",encoding="utf-8")
+logInfo = open("./data/output/logInfo_{}_{}.txt".format(args.model, args.dataset), mode="w", encoding="utf-8")
 
 
 # _UNUSED_TOKENIZER = models.load_tokenizer()
@@ -72,11 +71,12 @@ def get_generation_config(input_ids, tokenizer, data_name):
 
 
 @torch.no_grad()
-def get_generations(model_name:str, args, seed=1, old_sequences=None, max_num_gen_once=args.num_generations_per_prompt):
+def get_generations(model_name: str, args, seed=1, old_sequences=None,
+                    max_num_gen_once=args.num_generations_per_prompt):
     device = args.device
     model, tokenizer = models.load_model_and_tokenizer(model_name, args.device)
-    SenSimModel = SentenceTransformer('./data/weights/nli-roberta-large')
-    bertscore = BERTScore(model_name_or_path="./data/weights/bert-base/", device="cuda")
+    SenSimModel = SentenceTransformer('/mnt/f7a57ea9-f9b0-4806-966e-7f21cbc76421/zenghan/nli-roberta-large', device=device)
+    # bertscore = BERTScore(model_name_or_path="./data/weights/bert-base/", device="cuda")  # 不算selfcheckgpt
 
     utils.seed_everything(seed)
     dataset = get_dataset_fn(args.dataset)(tokenizer)
@@ -89,7 +89,7 @@ def get_generations(model_name:str, args, seed=1, old_sequences=None, max_num_ge
     old_sequences = {_['id']: _ for _ in old_sequences}
 
     sequences = []
-    time_start=time.time()
+    time_start = time.time()
     for batch_idx, batch in tqdm.tqdm(enumerate(dataloader), total=len(dataloader)):
         if batch['id'][0] in old_sequences:
             sequences.append(old_sequences[batch['id'][0]])
@@ -102,15 +102,18 @@ def get_generations(model_name:str, args, seed=1, old_sequences=None, max_num_ge
         if args.decoding_method == 'beam_search':
             raise NotImplementedError()
         elif args.decoding_method == 'greedy':
-            dict_outputs = model.generate(input_ids, attention_mask=batch['attention_mask'].to(device),
-                                        num_beams=1,
-                                        do_sample=False,
-                                        generation_config=generation_config,
-                                        output_hidden_states = True,
-                                        return_dict_in_generate=True,
-                                        output_scores=True)
+            # dict_outputs format see:
+            # https://huggingface.co/docs/transformers/v4.46.3/zh/internal/generation_utils#transformers.generation.GenerateDecoderOnlyOutput
+            dict_outputs = model.generate(input_ids,
+                                          attention_mask=batch['attention_mask'].to(device),
+                                          num_beams=1,
+                                          do_sample=False,
+                                          generation_config=generation_config,
+                                          output_hidden_states=True,
+                                          return_dict_in_generate=True,
+                                          output_scores=True)
 
-            scores = dict_outputs.scores    #([logits],[logits],[logits])
+            scores = dict_outputs.scores  #([logits],[logits],[logits])
             perplexity = get_perplexity_score(scores)
             energy_score = get_energy_score(scores)
             most_likely_generations = dict_outputs.sequences.cpu()[0, input_length:]
@@ -119,30 +122,29 @@ def get_generations(model_name:str, args, seed=1, old_sequences=None, max_num_ge
         generations = []
         num_gens = args.num_generations_per_prompt
         while num_gens > 0:
-            dict_outputs =  model.generate(input_ids, attention_mask=batch['attention_mask'].to(device),
-                            num_beams=1, num_return_sequences=min(max_num_gen_once, num_gens),
-                            do_sample=True, top_p=args.top_p, top_k=args.top_k,
-                            temperature=args.temperature, generation_config=generation_config,
-                            output_hidden_states = True, return_dict_in_generate=True, output_scores=True
-                            )
+            dict_outputs = model.generate(input_ids, attention_mask=batch['attention_mask'].to(device),
+                                          num_beams=1, num_return_sequences=min(max_num_gen_once, num_gens),
+                                          do_sample=True, top_p=args.top_p, top_k=args.top_k,
+                                          temperature=args.temperature, generation_config=generation_config,
+                                          output_hidden_states=True, return_dict_in_generate=True, output_scores=True
+                                          )
 
             generation = dict_outputs.sequences[:, input_length:].cpu()
             generations.append(generation)
-            num_tokens = get_num_tokens(generation)
+            num_tokens = get_num_tokens(generation)  #
             scores = dict_outputs.scores
-            predictive_entropy = get_lenghthNormalized_entropy(scores, num_tokens) 
+            predictive_entropy = get_lenghthNormalized_entropy(scores, num_tokens)
             hidden_states = dict_outputs.hidden_states
-            eigenIndicator, eigenValue = getEigenIndicator_v0(hidden_states, num_tokens)
-            num_gens -= len(generation)
+            eigenIndicator, eigenValue = getEigenIndicator_v1(hidden_states, num_tokens)  # v0
+            num_gens
 
         generations = torch.nested.nested_tensor(generations).to_padded_tensor(tokenizer.eos_token_id)
         generations = generations.reshape(-1, generations.shape[-1])[:args.num_generations_per_prompt]
         best_generated_text = tokenizer.decode(most_likely_generations, skip_special_tokens=True)
         generated_texts = [tokenizer.decode(_, skip_special_tokens=True) for _ in generations]
         lexical_similarity = getLexicalSim(generated_texts)
-        sent_bertscore = getAvgBertScore(bertscore, best_generated_text, generated_texts)
+        # sent_bertscore = getAvgBertScore(bertscore, best_generated_text, generated_texts)  # 不算bert_score
         eigenIndicatorOutput, eigenValue_O = getEigenIndicatorOutput(generated_texts, SenSimModel)
-
 
         # remember the data
         curr_seq = dict(
@@ -154,13 +156,14 @@ def get_generations(model_name:str, args, seed=1, old_sequences=None, max_num_ge
         )
         curr_seq.update(
             dict(
-                most_likely_generation_ids = most_likely_generations,
+                most_likely_generation_ids=most_likely_generations,
                 generations_ids=generations,
             )
         )
         curr_seq.update(
             dict(
-                most_likely_generation=tokenizer.decode(curr_seq['most_likely_generation_ids'], skip_special_tokens=True),
+                most_likely_generation=tokenizer.decode(curr_seq['most_likely_generation_ids'],
+                                                        skip_special_tokens=True),
                 generations=generated_texts,
             )
         )
@@ -179,11 +182,11 @@ def get_generations(model_name:str, args, seed=1, old_sequences=None, max_num_ge
                 lexical_similarity=lexical_similarity
             )
         )
-        curr_seq.update(
-            dict(
-                sent_bertscore=sent_bertscore
-            )
-        )
+        # curr_seq.update(
+        #     dict(
+        #         sent_bertscore=sent_bertscore
+        #     )
+        # )  # 暂时不算bertscore
         curr_seq.update(
             dict(
                 entropy=predictive_entropy
@@ -204,7 +207,7 @@ def get_generations(model_name:str, args, seed=1, old_sequences=None, max_num_ge
 
         sequences.append(curr_seq)
         torch.cuda.empty_cache()
-        ########## 信息打印 #########
+        # ------ 信息打印 ------ #
         # print("Prompt:", tokenizer.decode(input_ids.cpu()[0], skip_special_tokens=True))
         print("Question:", batch['question'][0])
         print("AnswerGT:", batch['answer'][0])
@@ -221,17 +224,18 @@ def get_generations(model_name:str, args, seed=1, old_sequences=None, max_num_ge
         print("Prompt:", tokenizer.decode(input_ids.cpu()[0], skip_special_tokens=True), file=logInfo)
         print("Question:", batch['question'][0], file=logInfo)
         print("GTAns:", batch['answer'][0], file=logInfo)
-        print("BestAns:", tokenizer.decode(curr_seq['most_likely_generation_ids'], skip_special_tokens=True), file=logInfo)
+        print("BestAns:", tokenizer.decode(curr_seq['most_likely_generation_ids'], skip_special_tokens=True),
+              file=logInfo)
         print("BatchGenerations:", generated_texts, file=logInfo)
         print("Perplexity:", perplexity, file=logInfo)
         print("Energy:", energy_score, file=logInfo)
         print("NormalizedEntropy: ", predictive_entropy, file=logInfo)
         print("LexicalSimilarity: ", lexical_similarity, file=logInfo)
-        print("SentBERTScore: ", sent_bertscore, file=logInfo)
+        # print("SentBERTScore: ", sent_bertscore, file=logInfo)  # 不算bertscore
         print("EigenScore: ", eigenIndicator, file=logInfo)
         print("EigenValue:", eigenValue, file=logInfo)
         print("EigenScore-Output: ", eigenIndicatorOutput, file=logInfo)
-        print("\n","\n","\n", file=logInfo)
+        print("\n", "\n", "\n", file=logInfo)
     return sequences
 
 
@@ -240,16 +244,16 @@ def get_num_tokens(generation):  # generation: num_seq x max(num_tokens)
     for ids in generation:
         count = 0
         for id in ids:
-            if id>2:
-                count+=1
-        num_tokens.append(count+1)
+            if id > 2:
+                count += 1
+        num_tokens.append(count + 1)
     return num_tokens
 
 
-def main(overwrite=False, continue_from=None, parallel:int=None):
+def main(overwrite=False, continue_from=None, parallel: int = None):
     if continue_from:
-        fname = os.path.basename(continue_from)
-        args.__dict__ = utils.jload(continue_from.replace(fname, 'args'+fname.replace("_partial.pkl", ".json")))
+        fname = str(os.path.basename(continue_from))
+        args.__dict__ = utils.jload(continue_from.replace(fname, 'args' + fname.replace("_partial.pkl", ".json")))
         old_sequences = pd.read_pickle(continue_from)
         cache_dir = os.path.dirname(continue_from)
         run_id = int(os.path.basename(continue_from).replace("_partial.pkl", ""))
@@ -275,6 +279,7 @@ def main(overwrite=False, continue_from=None, parallel:int=None):
     print(f'Writing {len(sequences)} generations to {cache_dir}...')
     pd.to_pickle(sequences, os.path.join(cache_dir, f'{run_id}.pkl'))
     return
+
 
 if __name__ == '__main__':
     task_runner = main(parallel=args.nprocess)

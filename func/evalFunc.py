@@ -1,24 +1,25 @@
 import os
 import numpy as np
 import pickle as pkl
-import evaluate
+# import evaluate
 from rouge_score import rouge_scorer
 import math
 from sklearn.metrics import roc_curve, auc
 from sentence_transformers import SentenceTransformer
 from metric import *
 from plot import *
+from tqdm import tqdm
 
 USE_Roberta = False
-USE_EXACT_MATCH = True
-##### 导入ROUGE评估函数计算ROUGE-L指标
-###### 导入roberta_large模型计算sentence similarity
+USE_EXACT_MATCH = False
+# ------ 导入ROUGE评估函数计算ROUGE-L指标 ------ #
+# ------ 导入roberta_large模型计算sentence similarity ------ #
 rougeEvaluator = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
 if USE_Roberta:
     SenSimModel = SentenceTransformer('../data/weights/nli-roberta-large')
 
 
-##### 打印结果信息, resultDict is a list of dict
+# 打印结果信息, resultDict is a list of dict
 def printInfo(resultDict):
     print(len(resultDict))
     for item in resultDict:
@@ -27,11 +28,10 @@ def printInfo(resultDict):
         exit()
 
 
-
-#### 计算LLM模型输出answer的准确率
+# 计算LLM模型输出answer的准确率
 def getAcc(resultDict, file_name):
     correctCount = 0
-    for item in resultDict:
+    for item in tqdm(resultDict):
         ansGT = item["answer"]
         generations = item["most_likely_generation"]
         # print("GT:", ansGT)
@@ -41,32 +41,30 @@ def getAcc(resultDict, file_name):
             additional_answers = item["additional_answers"]
             rougeScores = [getRouge(rougeEvaluator, generations, ansGT) for ansGT in additional_answers]
             rougeScore = max(rougeScore, max(rougeScores))
-        if rougeScore>0.5:
+        if rougeScore > 0.5:
             correctCount += 1
-    print("Acc:", 1.0*correctCount/len(resultDict))
+    print("Acc:", 1.0 * correctCount / len(resultDict))
 
 
-
-##### 计算皮尔逊相关系数
+# 计算皮尔逊相关系数
 def getPCC(x, y):
     rho = np.corrcoef(np.array(x), np.array(y))
-    return rho[0,1]
+    return rho[0, 1]
 
 
-
-##### 计算度量指标的AUROC
+# 计算度量指标的AUROC
 def getAUROC(resultDict, file_name):
     Label = []
     Score = []
     Perplexity = []
     Energy = []
     LexicalSimilarity = []
-    SentBertScore = []
+    # SentBertScore = []  # 暂时不用
     Entropy = []
     EigenIndicator = []
     EigenIndicatorOutput = []
 
-    for item in resultDict:
+    for item in tqdm(resultDict):
         ansGT = item["answer"]
         generations = item["most_likely_generation"]
         # print("GT:", ansGT)
@@ -75,10 +73,9 @@ def getAUROC(resultDict, file_name):
         Energy.append(-item["energy"])
         Entropy.append(-item["entropy"])
         LexicalSimilarity.append(item["lexical_similarity"])
-        SentBertScore.append(-item["sent_bertscore"])
+        # SentBertScore.append(-item["sent_bertscore"])  # 暂时不用
         EigenIndicator.append(-item["eigenIndicator"])
         EigenIndicatorOutput.append(-item["eigenIndicatorOutput"])
-
 
         if USE_Roberta:
             similarity = getSentenceSimilarity(generations, ansGT, SenSimModel)
@@ -86,7 +83,7 @@ def getAUROC(resultDict, file_name):
                 additional_answers = item["additional_answers"]
                 similarities = [getSentenceSimilarity(generations, ansGT, SenSimModel) for ansGT in additional_answers]
                 similarity = max(similarity, max(similarities))
-            if similarity>0.9:
+            if similarity > 0.9:
                 Label.append(1)
             else:
                 Label.append(0)
@@ -97,7 +94,7 @@ def getAUROC(resultDict, file_name):
                 additional_answers = item["additional_answers"]
                 similarities = [compute_exact_match(generations, ansGT) for ansGT in additional_answers]
                 similarity = max(similarity, max(similarities))
-            if similarity==1:
+            if similarity == 1:
                 Label.append(1)
             else:
                 Label.append(0)
@@ -108,14 +105,13 @@ def getAUROC(resultDict, file_name):
                 additional_answers = item["additional_answers"]
                 rougeScores = [getRouge(rougeEvaluator, generations, ansGT) for ansGT in additional_answers]
                 rougeScore = max(rougeScore, max(rougeScores))
-            if rougeScore>0.5:
+            if rougeScore > 0.5:
                 Label.append(1)
             else:
                 Label.append(0)
             Score.append(rougeScore)
 
-
-######### 计算AUROC ###########
+    # ------ 计算AUROC ------ #
     fpr, tpr, thresholds = roc_curve(Label, Perplexity)
     AUROC = auc(fpr, tpr)
     # thresh_Perplexity = thresholds[np.argmax(tpr - fpr)]
@@ -131,7 +127,6 @@ def getAUROC(resultDict, file_name):
     print("AUROC-Energy:", AUROC)
     # print("thresh_Energy:", thresh_Energy)
     VisAUROC(tpr, fpr, AUROC, "Energy")
-
 
     fpr, tpr, thresholds = roc_curve(Label, Entropy)
     AUROC = auc(fpr, tpr)
@@ -149,13 +144,14 @@ def getAUROC(resultDict, file_name):
     # print("thresh_LexicalSim:", thresh_LexicalSim)
     VisAUROC(tpr, fpr, AUROC, "LexicalSim")
 
-    fpr, tpr, thresholds = roc_curve(Label, SentBertScore)
-    AUROC = auc(fpr, tpr)
-    # thresh_SentBertScore = thresholds[np.argmax(tpr - fpr)]
-    thresh_SentBertScore = get_threshold(thresholds, tpr, fpr)
-    print("AUROC-SentBertScore:", AUROC)
-    # print("thresh_SentBertScore:", thresh_SentBertScore)
-    VisAUROC(tpr, fpr, AUROC, "SentBertScore")
+    # 暂时不用
+    # fpr, tpr, thresholds = roc_curve(Label, SentBertScore)
+    # AUROC = auc(fpr, tpr)
+    # # thresh_SentBertScore = thresholds[np.argmax(tpr - fpr)]
+    # thresh_SentBertScore = get_threshold(thresholds, tpr, fpr)
+    # print("AUROC-SentBertScore:", AUROC)
+    # # print("thresh_SentBertScore:", thresh_SentBertScore)
+    # VisAUROC(tpr, fpr, AUROC, "SentBertScore")
 
     fpr, tpr, thresholds = roc_curve(Label, EigenIndicator)
     AUROC = auc(fpr, tpr)
@@ -173,8 +169,7 @@ def getAUROC(resultDict, file_name):
     # print("thresh_EigenScoreOutput:", thresh_EigenScoreOutput)
     VisAUROC(tpr, fpr, AUROC, "EigenScoreOutput", file_name.split("_")[1])
 
-
-######## 计算皮尔逊相关系数 ###############
+    # ------ 计算皮尔逊相关系数 ------ #
     rho_Perplexity = getPCC(Score, Perplexity)
     rho_Entropy = getPCC(Score, Entropy)
     rho_Energy = getPCC(Score, Energy)
@@ -188,9 +183,7 @@ def getAUROC(resultDict, file_name):
     print("rho_EigenScore:", rho_EigenIndicator)
     print("rho_EigenScoreOutput:", rho_EigenIndicatorOutput)
 
-
-
-######### 计算幻觉检测准确率(TruthfulQA)
+    # ------ 计算幻觉检测准确率(TruthfulQA) ------ #
     if "TruthfulQA" in file_name:
         acc = getTruthfulQAAccuracy(Label, Perplexity, thresh_Perplexity)
         print("TruthfulQA Perplexity Accuracy:", acc)
@@ -200,56 +193,59 @@ def getAUROC(resultDict, file_name):
         print("TruthfulQA Entropy Accuracy:", acc)
         acc = getTruthfulQAAccuracy(Label, LexicalSimilarity, thresh_LexicalSim)
         print("TruthfulQA LexicalSimilarity Accuracy:", acc)
-        acc = getTruthfulQAAccuracy(Label, SentBertScore, thresh_SentBertScore)
-        print("TruthfulQA SentBertScore Accuracy:", acc)
+        # acc = getTruthfulQAAccuracy(Label, SentBertScore, thresh_SentBertScore)
+        # print("TruthfulQA SentBertScore Accuracy:", acc)
         acc = getTruthfulQAAccuracy(Label, EigenIndicator, thresh_EigenScore)
         print("TruthfulQA EigenIndicator Accuracy:", acc)
         acc = getTruthfulQAAccuracy(Label, EigenIndicatorOutput, thresh_EigenScoreOutput)
         print("TruthfulQA EigenIndicatorOutput Accuracy:", acc)
 
 
-
 # 查找最佳阈值
 def get_threshold(thresholds, tpr, fpr):
     gmean = np.sqrt(tpr * (1 - fpr))
     index = np.argmax(gmean)
-    thresholdOpt = round(thresholds[index], ndigits = 4)
+    thresholdOpt = round(thresholds[index], ndigits=4)
     return thresholdOpt
-
 
 
 def getTruthfulQAAccuracy(Label, Score, thresh):
     count = 0
     for ind, item in enumerate(Score):
-        if item>=thresh and Label[ind]==1:
-            count+=1
-        if item<thresh and Label[ind]==0:
-            count+=1
-    return count/len(Score)
-
+        if item >= thresh and Label[ind] == 1:
+            count += 1
+        if item < thresh and Label[ind] == 0:
+            count += 1
+    return count / len(Score)
 
 
 def normalize_text(s):
     """Removing articles and punctuation, and standardizing whitespace are all typical text processing steps."""
     import string, re
+
     def remove_articles(text):
         regex = re.compile(r"\b(a|an|the)\b", re.UNICODE)
         return re.sub(regex, " ", text)
+
     def white_space_fix(text):
         return " ".join(text.split())
+
     def remove_punc(text):
         exclude = set(string.punctuation)
         return "".join(ch for ch in text if ch not in exclude)
+
     def lower(text):
         return text.lower()
+
     return white_space_fix(remove_articles(remove_punc(lower(s))))
+
 
 def compute_exact_match(prediction, truth):
     return int(normalize_text(prediction) == normalize_text(truth))
 
 
 if __name__ == "__main__":
-    file_name = "../data/output/llama-7b-hf_coqa_1/0.pkl"
+    file_name = "/mnt/f7a57ea9-f9b0-4806-966e-7f21cbc76421/zenghan/eigenscore_base/output/llama-7b-hf_coqa_0/0.pkl"
     # file_name = "../data/output/llama-7b-hf_triviaqa_3/0.pkl"
     # file_name = "../data/output/llama-7b-hf_nq_open_1/0.pkl"
     # file_name = "../data/output/llama-7b-hf_SQuAD_1/0.pkl"
@@ -272,10 +268,8 @@ if __name__ == "__main__":
     # file_name = "../data/output/falcon-7b_coqa_0/0.pkl"
     # file_name = "../data/output/falcon-7b_nq_open_0/0.pkl"
 
-
     f = open(file_name, "rb")
     resultDict = pkl.load(f)
     # printInfo(resultDict)
     getAcc(resultDict, file_name)
     getAUROC(resultDict, file_name)
-
