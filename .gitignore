@@ -1,4 +1,4 @@
 /.vscode
 /__pychache__
 /data/output
-
+../__pycache__
