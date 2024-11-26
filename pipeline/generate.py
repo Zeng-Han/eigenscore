@@ -131,12 +131,12 @@ def get_generations(model_name: str, args, seed=1, old_sequences=None,
 
             generation = dict_outputs.sequences[:, input_length:].cpu()
             generations.append(generation)
-            num_tokens = get_num_tokens(generation)  #
+            num_tokens = get_num_tokens(generation)  # 1 greater than the actual number of tokens
             scores = dict_outputs.scores
             predictive_entropy = get_lenghthNormalized_entropy(scores, num_tokens)
             hidden_states = dict_outputs.hidden_states
-            eigenIndicator, eigenValue = getEigenIndicator_v1(hidden_states, num_tokens)  # v0
-            num_gens
+            eigenIndicator, eigenValue = getEigenIndicator_v0(hidden_states, num_tokens)  # v0
+            num_gens -= len(generation)
 
         generations = torch.nested.nested_tensor(generations).to_padded_tensor(tokenizer.eos_token_id)
         generations = generations.reshape(-1, generations.shape[-1])[:args.num_generations_per_prompt]
